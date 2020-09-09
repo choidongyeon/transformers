@@ -15,7 +15,6 @@
 """ Auto Model class. """
 
 
-import logging
 import warnings
 from collections import OrderedDict
 
@@ -30,8 +29,10 @@ from .configuration_auto import (
     ElectraConfig,
     EncoderDecoderConfig,
     FlaubertConfig,
+    FunnelConfig,
     GPT2Config,
     LongformerConfig,
+    LxmertConfig,
     MBartConfig,
     MobileBertConfig,
     OpenAIGPTConfig,
@@ -108,6 +109,14 @@ from .modeling_flaubert import (
     FlaubertModel,
     FlaubertWithLMHeadModel,
 )
+from .modeling_funnel import (
+    FunnelForMaskedLM,
+    FunnelForMultipleChoice,
+    FunnelForQuestionAnswering,
+    FunnelForSequenceClassification,
+    FunnelForTokenClassification,
+    FunnelModel,
+)
 from .modeling_gpt2 import GPT2LMHeadModel, GPT2Model
 from .modeling_longformer import (
     LongformerForMaskedLM,
@@ -117,6 +126,7 @@ from .modeling_longformer import (
     LongformerForTokenClassification,
     LongformerModel,
 )
+from .modeling_lxmert import LxmertForPreTraining, LxmertModel
 from .modeling_marian import MarianMTModel
 from .modeling_mbart import MBartForConditionalGeneration
 from .modeling_mobilebert import (
@@ -157,6 +167,7 @@ from .modeling_xlm import (
     XLMWithLMHeadModel,
 )
 from .modeling_xlm_roberta import (
+    XLMRobertaForCausalLM,
     XLMRobertaForMaskedLM,
     XLMRobertaForMultipleChoice,
     XLMRobertaForQuestionAnswering,
@@ -172,9 +183,10 @@ from .modeling_xlnet import (
     XLNetLMHeadModel,
     XLNetModel,
 )
+from .utils import logging
 
 
-logger = logging.getLogger(__name__)
+logger = logging.get_logger(__name__)
 
 
 MODEL_MAPPING = OrderedDict(
@@ -199,6 +211,8 @@ MODEL_MAPPING = OrderedDict(
         (CTRLConfig, CTRLModel),
         (ElectraConfig, ElectraModel),
         (ReformerConfig, ReformerModel),
+        (FunnelConfig, FunnelModel),
+        (LxmertConfig, LxmertModel),
     ]
 )
 
@@ -223,6 +237,7 @@ MODEL_FOR_PRETRAINING_MAPPING = OrderedDict(
         (XLMConfig, XLMWithLMHeadModel),
         (CTRLConfig, CTRLLMHeadModel),
         (ElectraConfig, ElectraForPreTraining),
+        (LxmertConfig, LxmertForPreTraining),
     ]
 )
 
@@ -249,12 +264,14 @@ MODEL_WITH_LM_HEAD_MAPPING = OrderedDict(
         (ElectraConfig, ElectraForMaskedLM),
         (EncoderDecoderConfig, EncoderDecoderModel),
         (ReformerConfig, ReformerModelWithLMHead),
+        (FunnelConfig, FunnelForMaskedLM),
     ]
 )
 
 MODEL_FOR_CAUSAL_LM_MAPPING = OrderedDict(
     [
         (CamembertConfig, CamembertForCausalLM),
+        (XLMRobertaConfig, XLMRobertaForCausalLM),
         (RobertaConfig, RobertaForCausalLM),
         (BertConfig, BertLMHeadModel),
         (OpenAIGPTConfig, OpenAIGPTLMHeadModel),
@@ -285,6 +302,7 @@ MODEL_FOR_MASKED_LM_MAPPING = OrderedDict(
         (XLMConfig, XLMWithLMHeadModel),
         (ElectraConfig, ElectraForMaskedLM),
         (ReformerConfig, ReformerForMaskedLM),
+        (FunnelConfig, FunnelForMaskedLM),
     ]
 )
 
@@ -314,6 +332,7 @@ MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING = OrderedDict(
         (FlaubertConfig, FlaubertForSequenceClassification),
         (XLMConfig, XLMForSequenceClassification),
         (ElectraConfig, ElectraForSequenceClassification),
+        (FunnelConfig, FunnelForSequenceClassification),
     ]
 )
 
@@ -333,6 +352,7 @@ MODEL_FOR_QUESTION_ANSWERING_MAPPING = OrderedDict(
         (XLMConfig, XLMForQuestionAnsweringSimple),
         (ElectraConfig, ElectraForQuestionAnswering),
         (ReformerConfig, ReformerForQuestionAnswering),
+        (FunnelConfig, FunnelForQuestionAnswering),
     ]
 )
 
@@ -351,6 +371,7 @@ MODEL_FOR_TOKEN_CLASSIFICATION_MAPPING = OrderedDict(
         (AlbertConfig, AlbertForTokenClassification),
         (ElectraConfig, ElectraForTokenClassification),
         (FlaubertConfig, FlaubertForTokenClassification),
+        (FunnelConfig, FunnelForTokenClassification),
     ]
 )
 
@@ -368,18 +389,19 @@ MODEL_FOR_MULTIPLE_CHOICE_MAPPING = OrderedDict(
         (AlbertConfig, AlbertForMultipleChoice),
         (XLMConfig, XLMForMultipleChoice),
         (FlaubertConfig, FlaubertForMultipleChoice),
+        (FunnelConfig, FunnelForMultipleChoice),
     ]
 )
 
 
 class AutoModel:
     r"""
-        :class:`~transformers.AutoModel` is a generic model class
-        that will be instantiated as one of the base model classes of the library
-        when created with the `AutoModel.from_pretrained(pretrained_model_name_or_path)`
-        or the `AutoModel.from_config(config)` class methods.
+    :class:`~transformers.AutoModel` is a generic model class
+    that will be instantiated as one of the base model classes of the library
+    when created with the `AutoModel.from_pretrained(pretrained_model_name_or_path)`
+    or the `AutoModel.from_config(config)` class methods.
 
-        This class cannot be instantiated using `__init__()` (throws an error).
+    This class cannot be instantiated using `__init__()` (throws an error).
     """
 
     def __init__(self):
@@ -391,7 +413,7 @@ class AutoModel:
 
     @classmethod
     def from_config(cls, config):
-        r""" Instantiates one of the base model classes of the library
+        r"""Instantiates one of the base model classes of the library
         from a configuration.
 
         Note:
@@ -415,6 +437,7 @@ class AutoModel:
                 - isInstance of `xlm` configuration class: :class:`~transformers.XLMModel` (XLM model)
                 - isInstance of `flaubert` configuration class: :class:`~transformers.FlaubertModel` (Flaubert model)
                 - isInstance of `electra` configuration class: :class:`~transformers.ElectraModel` (Electra model)
+                - isInstance of `funnel` configuration class: :class:`~transformers.FunnelModel` (Funnel Transformer model)
 
         Examples::
 
@@ -433,7 +456,7 @@ class AutoModel:
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
-        r""" Instantiates one of the base model classes of the library
+        r"""Instantiates one of the base model classes of the library
         from a pre-trained model configuration.
 
         The `from_pretrained()` method takes care of returning the correct model class instance
@@ -456,6 +479,7 @@ class AutoModel:
             - `ctrl`: :class:`~transformers.CTRLModel` (Salesforce CTRL  model)
             - `flaubert`: :class:`~transformers.FlaubertModel` (Flaubert  model)
             - `electra`: :class:`~transformers.ElectraModel` (Electra  model)
+            - `funnel`: :class:`~transformers.FunnelModel` (Funnel Transformer model)
 
         The model is set in evaluation mode by default using `model.eval()` (Dropout modules are deactivated)
         To train the model, you should first set it back in training mode with `model.train()`
@@ -506,6 +530,7 @@ class AutoModel:
         Examples::
 
             model = AutoModel.from_pretrained('bert-base-uncased')    # Download model and configuration from S3 and cache.
+            model = AutoModel.from_pretrained('bert-base-uncased', output_attentions=True)  # Update configuration during loading
             assert model.config.output_attentions == True
             # Loading from a TF checkpoint file instead of a PyTorch model (slower)
             config = AutoConfig.from_json_file('./tf_model/bert_tf_model_config.json')
@@ -531,11 +556,11 @@ class AutoModel:
 
 class AutoModelForPreTraining:
     r"""
-        :class:`~transformers.AutoModelForPreTraining` is a generic model class
-        that will be instantiated as one of the model classes of the library -with the architecture used for pretraining this model– when created with the `AutoModelForPreTraining.from_pretrained(pretrained_model_name_or_path)`
-        class method.
+    :class:`~transformers.AutoModelForPreTraining` is a generic model class
+    that will be instantiated as one of the model classes of the library -with the architecture used for pretraining this model– when created with the `AutoModelForPreTraining.from_pretrained(pretrained_model_name_or_path)`
+    class method.
 
-        This class cannot be instantiated using `__init__()` (throws an error).
+    This class cannot be instantiated using `__init__()` (throws an error).
     """
 
     def __init__(self):
@@ -547,7 +572,7 @@ class AutoModelForPreTraining:
 
     @classmethod
     def from_config(cls, config):
-        r""" Instantiates one of the base model classes of the library
+        r"""Instantiates one of the base model classes of the library
         from a configuration.
 
         Note:
@@ -589,7 +614,7 @@ class AutoModelForPreTraining:
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
-        r""" Instantiates one of the model classes of the library -with the architecture used for pretraining this model– from a pre-trained model configuration.
+        r"""Instantiates one of the model classes of the library -with the architecture used for pretraining this model– from a pre-trained model configuration.
 
         The `from_pretrained()` method takes care of returning the correct model class instance
         based on the `model_type` property of the config object, or when it's missing,
@@ -655,7 +680,8 @@ class AutoModelForPreTraining:
 
             model = AutoModelForPreTraining.from_pretrained('bert-base-uncased')    # Download model and configuration from S3 and cache.
             model = AutoModelForPreTraining.from_pretrained('./test/bert_model/')  # E.g. model was saved using `save_pretrained('./test/saved_model/')`
-            assert model.config.output_attention == True
+            model = AutoModelForPreTraining.from_pretrained('bert-base-uncased', output_attentions=True)  # Update configuration during loading
+            assert model.config.output_attentions == True
             # Loading from a TF checkpoint file instead of a PyTorch model (slower)
             config = AutoConfig.from_json_file('./tf_model/bert_tf_model_config.json')
             model = AutoModelForPreTraining.from_pretrained('./tf_model/bert_tf_checkpoint.ckpt.index', from_tf=True, config=config)
@@ -680,12 +706,12 @@ class AutoModelForPreTraining:
 
 class AutoModelWithLMHead:
     r"""
-        :class:`~transformers.AutoModelWithLMHead` is a generic model class
-        that will be instantiated as one of the language modeling model classes of the library
-        when created with the `AutoModelWithLMHead.from_pretrained(pretrained_model_name_or_path)`
-        class method.
+    :class:`~transformers.AutoModelWithLMHead` is a generic model class
+    that will be instantiated as one of the language modeling model classes of the library
+    when created with the `AutoModelWithLMHead.from_pretrained(pretrained_model_name_or_path)`
+    class method.
 
-        This class cannot be instantiated using `__init__()` (throws an error).
+    This class cannot be instantiated using `__init__()` (throws an error).
     """
 
     def __init__(self):
@@ -697,7 +723,7 @@ class AutoModelWithLMHead:
 
     @classmethod
     def from_config(cls, config):
-        r""" Instantiates one of the base model classes of the library
+        r"""Instantiates one of the base model classes of the library
         from a configuration.
 
         Note:
@@ -721,6 +747,7 @@ class AutoModelWithLMHead:
                 - isInstance of `xlm` configuration class: :class:`~transformers.XLMWithLMHeadModel` (XLM model)
                 - isInstance of `flaubert` configuration class: :class:`~transformers.FlaubertWithLMHeadModel` (Flaubert model)
                 - isInstance of `electra` configuration class: :class:`~transformers.ElectraForMaskedLM` (Electra model)
+                - isInstance of `funnel` configuration class: :class:`~transformers.FunnelForMaskedLM` (Funnel Transformer model)
 
         Examples::
 
@@ -743,7 +770,7 @@ class AutoModelWithLMHead:
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
-        r""" Instantiates one of the language modeling model classes of the library
+        r"""Instantiates one of the language modeling model classes of the library
         from a pre-trained model configuration.
 
         The `from_pretrained()` method takes care of returning the correct model class instance
@@ -766,6 +793,7 @@ class AutoModelWithLMHead:
             - `ctrl`: :class:`~transformers.CTRLLMHeadModel` (Salesforce CTRL model)
             - `flaubert`: :class:`~transformers.FlaubertWithLMHeadModel` (Flaubert model)
             - `electra`: :class:`~transformers.ElectraForMaskedLM` (Electra model)
+            - `funnel`: :class:`~transformers.FunnelForMaskedLM` (Funnel Transformer model)
 
         The model is set in evaluation mode by default using `model.eval()` (Dropout modules are deactivated)
         To train the model, you should first set it back in training mode with `model.train()`
@@ -810,7 +838,8 @@ class AutoModelWithLMHead:
 
             model = AutoModelWithLMHead.from_pretrained('bert-base-uncased')    # Download model and configuration from S3 and cache.
             model = AutoModelWithLMHead.from_pretrained('./test/bert_model/')  # E.g. model was saved using `save_pretrained('./test/saved_model/')`
-            assert model.config.output_attention == True
+            model = AutoModelWithLMHead.from_pretrained('bert-base-uncased', output_attentions=True)  # Update configuration during loading
+            assert model.config.output_attentions == True
             # Loading from a TF checkpoint file instead of a PyTorch model (slower)
             config = AutoConfig.from_json_file('./tf_model/bert_tf_model_config.json')
             model = AutoModelWithLMHead.from_pretrained('./tf_model/bert_tf_checkpoint.ckpt.index', from_tf=True, config=config)
@@ -839,12 +868,12 @@ class AutoModelWithLMHead:
 
 class AutoModelForCausalLM:
     r"""
-        :class:`~transformers.AutoModelForCausalLM` is a generic model class
-        that will be instantiated as one of the language modeling model classes of the library
-        when created with the `AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path)`
-        class method.
+    :class:`~transformers.AutoModelForCausalLM` is a generic model class
+    that will be instantiated as one of the language modeling model classes of the library
+    when created with the `AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path)`
+    class method.
 
-        This class cannot be instantiated using `__init__()` (throws an error).
+    This class cannot be instantiated using `__init__()` (throws an error).
     """
 
     def __init__(self):
@@ -856,7 +885,7 @@ class AutoModelForCausalLM:
 
     @classmethod
     def from_config(cls, config):
-        r""" Instantiates one of the base model classes of the library
+        r"""Instantiates one of the base model classes of the library
         from a configuration.
 
         Note:
@@ -893,7 +922,7 @@ class AutoModelForCausalLM:
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
-        r""" Instantiates one of the language modeling model classes of the library
+        r"""Instantiates one of the language modeling model classes of the library
         from a pre-trained model configuration.
 
         The `from_pretrained()` method takes care of returning the correct model class instance
@@ -951,7 +980,8 @@ class AutoModelForCausalLM:
 
             model = AutoModelForCausalLM.from_pretrained('gpt2')    # Download model and configuration from S3 and cache.
             model = AutoModelForCausalLM.from_pretrained('./test/gpt2_model/')  # E.g. model was saved using `save_pretrained('./test/saved_model/')`
-            assert model.config.output_attention == True
+            model = AutoModelForCausalLM.from_pretrained('bert-base-uncased', output_attentions=True)  # Update configuration during loading
+            assert model.config.output_attentions == True
             # Loading from a TF checkpoint file instead of a PyTorch model (slower)
             config = AutoConfig.from_json_file('./tf_model/gpt2_tf_model_config.json')
             model =  AutoModelForCausalLM.from_pretrained('./tf_model/gpt2_tf_checkpoint.ckpt.index', from_tf=True, config=config)
@@ -976,12 +1006,12 @@ class AutoModelForCausalLM:
 
 class AutoModelForMaskedLM:
     r"""
-        :class:`~transformers.AutoModelForMaskedLM` is a generic model class
-        that will be instantiated as one of the language modeling model classes of the library
-        when created with the `AutoModelForMaskedLM.from_pretrained(pretrained_model_name_or_path)`
-        class method.
+    :class:`~transformers.AutoModelForMaskedLM` is a generic model class
+    that will be instantiated as one of the language modeling model classes of the library
+    when created with the `AutoModelForMaskedLM.from_pretrained(pretrained_model_name_or_path)`
+    class method.
 
-        This class cannot be instantiated using `__init__()` (throws an error).
+    This class cannot be instantiated using `__init__()` (throws an error).
     """
 
     def __init__(self):
@@ -993,7 +1023,7 @@ class AutoModelForMaskedLM:
 
     @classmethod
     def from_config(cls, config):
-        r""" Instantiates one of the base model classes of the library
+        r"""Instantiates one of the base model classes of the library
         from a configuration.
 
         Note:
@@ -1014,6 +1044,7 @@ class AutoModelForMaskedLM:
                 - isInstance of `electra` configuration class: :class:`~transformers.ElectraForMaskedLM` (Electra model)
                 - isInstance of `camembert` configuration class: :class:`~transformers.CamembertForMaskedLM` (Camembert model)
                 - isInstance of `albert` configuration class: :class:`~transformers.AlbertForMaskedLM` (Albert model)
+                - isInstance of `funnel` configuration class: :class:`~transformers.FunnelForMaskedLM` (Funnel Transformer model)
 
 
         Examples::
@@ -1033,7 +1064,7 @@ class AutoModelForMaskedLM:
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
-        r""" Instantiates one of the language modeling model classes of the library
+        r"""Instantiates one of the language modeling model classes of the library
         from a pre-trained model configuration.
 
         The `from_pretrained()` method takes care of returning the correct model class instance
@@ -1050,6 +1081,7 @@ class AutoModelForMaskedLM:
             - `flaubert`: :class:`~transformers.FlaubertWithLMHeadModel` (Flaubert model)
             - `electra`: :class:`~transformers.ElectraForMaskedLM` (Electra model)
             - `bert`: :class:`~transformers.BertLMHeadModel` (Bert model)
+            - `funnel`: :class:`~transformers.FunnelForMaskedLM` (Funnel Transformer model)
 
         The model is set in evaluation mode by default using `model.eval()` (Dropout modules are deactivated)
         To train the model, you should first set it back in training mode with `model.train()`
@@ -1094,7 +1126,8 @@ class AutoModelForMaskedLM:
 
             model = AutoModelForMaskedLM.from_pretrained('bert')    # Download model and configuration from S3 and cache.
             model = AutoModelForMaskedLM.from_pretrained('./test/bert_model/')  # E.g. model was saved using `save_pretrained('./test/saved_model/')`
-            assert model.config.output_attention == True
+            model = AutoModelForMaskedLM.from_pretrained('bert-base-uncased', output_attentions=True)  # Update configuration during loading
+            assert model.config.output_attentions == True
             # Loading from a TF checkpoint file instead of a PyTorch model (slower)
             config = AutoConfig.from_json_file('./tf_model/bert_tf_model_config.json')
             model =  AutoModelForMaskedLM.from_pretrained('./tf_model/bert_tf_checkpoint.ckpt.index', from_tf=True, config=config)
@@ -1119,12 +1152,12 @@ class AutoModelForMaskedLM:
 
 class AutoModelForSeq2SeqLM:
     r"""
-        :class:`~transformers.AutoModelForSeq2SeqLM` is a generic model class
-        that will be instantiated as one of the language modeling model classes of the library
-        when created with the `AutoModelForSeq2SeqLM.from_pretrained(pretrained_model_name_or_path)`
-        class method.
+    :class:`~transformers.AutoModelForSeq2SeqLM` is a generic model class
+    that will be instantiated as one of the language modeling model classes of the library
+    when created with the `AutoModelForSeq2SeqLM.from_pretrained(pretrained_model_name_or_path)`
+    class method.
 
-        This class cannot be instantiated using `__init__()` (throws an error).
+    This class cannot be instantiated using `__init__()` (throws an error).
     """
 
     def __init__(self):
@@ -1136,7 +1169,7 @@ class AutoModelForSeq2SeqLM:
 
     @classmethod
     def from_config(cls, config):
-        r""" Instantiates one of the base model classes of the library
+        r"""Instantiates one of the base model classes of the library
         from a configuration.
 
         Note:
@@ -1172,7 +1205,7 @@ class AutoModelForSeq2SeqLM:
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
-        r""" Instantiates one of the language modeling model classes of the library
+        r"""Instantiates one of the language modeling model classes of the library
         from a pre-trained model configuration.
 
         The `from_pretrained()` method takes care of returning the correct model class instance
@@ -1227,7 +1260,8 @@ class AutoModelForSeq2SeqLM:
 
             model = AutoModelForSeq2SeqLM.from_pretrained('t5-base')    # Download model and configuration from S3 and cache.
             model = AutoModelForSeq2SeqLM.from_pretrained('./test/t5_model/')  # E.g. model was saved using `save_pretrained('./test/saved_model/')`
-            assert model.config.output_attention == True
+            model = AutoModelForSeq2SeqLM.from_pretrained('bert-base-uncased', output_attentions=True)  # Update configuration during loading
+            assert model.config.output_attentions == True
             # Loading from a TF checkpoint file instead of a PyTorch model (slower)
             config = AutoConfig.from_json_file('./tf_model/t5_tf_model_config.json')
             model =  AutoModelForSeq2SeqLM.from_pretrained('./tf_model/t5_tf_checkpoint.ckpt.index', from_tf=True, config=config)
@@ -1254,12 +1288,12 @@ class AutoModelForSeq2SeqLM:
 
 class AutoModelForSequenceClassification:
     r"""
-        :class:`~transformers.AutoModelForSequenceClassification` is a generic model class
-        that will be instantiated as one of the sequence classification model classes of the library
-        when created with the `AutoModelForSequenceClassification.from_pretrained(pretrained_model_name_or_path)`
-        class method.
+    :class:`~transformers.AutoModelForSequenceClassification` is a generic model class
+    that will be instantiated as one of the sequence classification model classes of the library
+    when created with the `AutoModelForSequenceClassification.from_pretrained(pretrained_model_name_or_path)`
+    class method.
 
-        This class cannot be instantiated using `__init__()` (throws an error).
+    This class cannot be instantiated using `__init__()` (throws an error).
     """
 
     def __init__(self):
@@ -1271,7 +1305,7 @@ class AutoModelForSequenceClassification:
 
     @classmethod
     def from_config(cls, config):
-        r""" Instantiates one of the base model classes of the library
+        r"""Instantiates one of the base model classes of the library
         from a configuration.
 
         Note:
@@ -1292,7 +1326,7 @@ class AutoModelForSequenceClassification:
                 - isInstance of `xlnet` configuration class: :class:`~transformers.XLNetForSequenceClassification` (XLNet model)
                 - isInstance of `xlm` configuration class: :class:`~transformers.XLMForSequenceClassification` (XLM model)
                 - isInstance of `flaubert` configuration class: :class:`~transformers.FlaubertForSequenceClassification` (Flaubert model)
-
+                - isInstance of `funnel` configuration class: :class:`~transformers.FunnelModelForSequenceClassification` (Funnel Transformer model)
 
         Examples::
 
@@ -1313,7 +1347,7 @@ class AutoModelForSequenceClassification:
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
-        r""" Instantiates one of the sequence classification model classes of the library
+        r"""Instantiates one of the sequence classification model classes of the library
         from a pre-trained model configuration.
 
         The `from_pretrained()` method takes care of returning the correct model class instance
@@ -1328,6 +1362,7 @@ class AutoModelForSequenceClassification:
             - `bert`: :class:`~transformers.BertForSequenceClassification` (Bert model)
             - `xlnet`: :class:`~transformers.XLNetForSequenceClassification` (XLNet model)
             - `flaubert`: :class:`~transformers.FlaubertForSequenceClassification` (Flaubert model)
+            - `funnel`: :class:`~transformers.FunnelForSequenceClassification` (Funnel Transformer model)
 
         The model is set in evaluation mode by default using `model.eval()` (Dropout modules are deactivated)
         To train the model, you should first set it back in training mode with `model.train()`
@@ -1379,7 +1414,8 @@ class AutoModelForSequenceClassification:
 
             model = AutoModelForSequenceClassification.from_pretrained('bert-base-uncased')    # Download model and configuration from S3 and cache.
             model = AutoModelForSequenceClassification.from_pretrained('./test/bert_model/')  # E.g. model was saved using `save_pretrained('./test/saved_model/')`
-            assert model.config.output_attention == True
+            model = AutoModelForSequenceClassification.from_pretrained('bert-base-uncased', output_attentions=True)  # Update configuration during loading
+            assert model.config.output_attentions == True
             # Loading from a TF checkpoint file instead of a PyTorch model (slower)
             config = AutoConfig.from_json_file('./tf_model/bert_tf_model_config.json')
             model = AutoModelForSequenceClassification.from_pretrained('./tf_model/bert_tf_checkpoint.ckpt.index', from_tf=True, config=config)
@@ -1406,12 +1442,12 @@ class AutoModelForSequenceClassification:
 
 class AutoModelForQuestionAnswering:
     r"""
-        :class:`~transformers.AutoModelForQuestionAnswering` is a generic model class
-        that will be instantiated as one of the question answering model classes of the library
-        when created with the `AutoModelForQuestionAnswering.from_pretrained(pretrained_model_name_or_path)`
-        class method.
+    :class:`~transformers.AutoModelForQuestionAnswering` is a generic model class
+    that will be instantiated as one of the question answering model classes of the library
+    when created with the `AutoModelForQuestionAnswering.from_pretrained(pretrained_model_name_or_path)`
+    class method.
 
-        This class cannot be instantiated using `__init__()` (throws an error).
+    This class cannot be instantiated using `__init__()` (throws an error).
     """
 
     def __init__(self):
@@ -1423,7 +1459,7 @@ class AutoModelForQuestionAnswering:
 
     @classmethod
     def from_config(cls, config):
-        r""" Instantiates one of the base model classes of the library
+        r"""Instantiates one of the base model classes of the library
         from a configuration.
 
         Note:
@@ -1441,6 +1477,7 @@ class AutoModelForQuestionAnswering:
                 - isInstance of `xlnet` configuration class: :class:`~transformers.XLNetForQuestionAnswering` (XLNet model)
                 - isInstance of `xlm` configuration class: :class:`~transformers.XLMForQuestionAnswering` (XLM model)
                 - isInstance of `flaubert` configuration class: :class:`~transformers.FlaubertForQuestionAnswering` (XLM model)
+                - isInstance of `funnel` configuration class: :class:`~transformers.FunnelForQuestionAnswering` (Funnel Transformer model)
 
         Examples::
 
@@ -1462,7 +1499,7 @@ class AutoModelForQuestionAnswering:
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
-        r""" Instantiates one of the question answering model classes of the library
+        r"""Instantiates one of the question answering model classes of the library
         from a pre-trained model configuration.
 
         The `from_pretrained()` method takes care of returning the correct model class instance
@@ -1475,6 +1512,7 @@ class AutoModelForQuestionAnswering:
             - `xlnet`: :class:`~transformers.XLNetForQuestionAnswering` (XLNet model)
             - `xlm`: :class:`~transformers.XLMForQuestionAnswering` (XLM model)
             - `flaubert`: :class:`~transformers.FlaubertForQuestionAnswering` (XLM model)
+            - `funnel`: :class:`~transformers.FunnelForQuestionAnswering` (Funnel Transformer model)
 
         The model is set in evaluation mode by default using `model.eval()` (Dropout modules are deactivated)
         To train the model, you should first set it back in training mode with `model.train()`
@@ -1523,7 +1561,8 @@ class AutoModelForQuestionAnswering:
 
             model = AutoModelForQuestionAnswering.from_pretrained('bert-base-uncased')    # Download model and configuration from S3 and cache.
             model = AutoModelForQuestionAnswering.from_pretrained('./test/bert_model/')  # E.g. model was saved using `save_pretrained('./test/saved_model/')`
-            assert model.config.output_attention == True
+            model = AutoModelForQuestionAnswering.from_pretrained('bert-base-uncased', output_attentions=True)  # Update configuration during loading
+            assert model.config.output_attentions == True
             # Loading from a TF checkpoint file instead of a PyTorch model (slower)
             config = AutoConfig.from_json_file('./tf_model/bert_tf_model_config.json')
             model = AutoModelForQuestionAnswering.from_pretrained('./tf_model/bert_tf_checkpoint.ckpt.index', from_tf=True, config=config)
@@ -1551,12 +1590,12 @@ class AutoModelForQuestionAnswering:
 
 class AutoModelForTokenClassification:
     r"""
-        :class:`~transformers.AutoModelForTokenClassification` is a generic model class
-        that will be instantiated as one of the token classification model classes of the library
-        when created with the `AutoModelForTokenClassification.from_pretrained(pretrained_model_name_or_path)`
-        class method.
+    :class:`~transformers.AutoModelForTokenClassification` is a generic model class
+    that will be instantiated as one of the token classification model classes of the library
+    when created with the `AutoModelForTokenClassification.from_pretrained(pretrained_model_name_or_path)`
+    class method.
 
-        This class cannot be instantiated using `__init__()` (throws an error).
+    This class cannot be instantiated using `__init__()` (throws an error).
     """
 
     def __init__(self):
@@ -1568,7 +1607,7 @@ class AutoModelForTokenClassification:
 
     @classmethod
     def from_config(cls, config):
-        r""" Instantiates one of the base model classes of the library
+        r"""Instantiates one of the base model classes of the library
         from a configuration.
 
         Note:
@@ -1590,6 +1629,7 @@ class AutoModelForTokenClassification:
                 - isInstance of `camembert` configuration class: :class:`~transformers.CamembertModelForTokenClassification` (Camembert model)
                 - isInstance of `roberta` configuration class: :class:`~transformers.RobertaModelForTokenClassification` (Roberta model)
                 - isInstance of `electra` configuration class: :class:`~transformers.ElectraForTokenClassification` (Electra model)
+                - isInstance of `funnel` configuration class: :class:`~transformers.FunnelForTokenClassification` (Funnel Transformer model)
 
         Examples::
 
@@ -1611,7 +1651,7 @@ class AutoModelForTokenClassification:
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
-        r""" Instantiates one of the question answering model classes of the library
+        r"""Instantiates one of the question answering model classes of the library
         from a pre-trained model configuration.
 
         The `from_pretrained()` method takes care of returning the correct model class instance
@@ -1627,6 +1667,7 @@ class AutoModelForTokenClassification:
             - `flaubert`: :class:`~transformers.FlaubertForTokenClassification` (Flaubert model)
             - `roberta`: :class:`~transformers.RobertaForTokenClassification` (Roberta model)
             - `electra`: :class:`~transformers.ElectraForTokenClassification` (Electra model)
+            - `funnel`: :class:`~transformers.FunnelForTokenClassification` (Funnel Transformer model)
 
         The model is set in evaluation mode by default using `model.eval()` (Dropout modules are deactivated)
         To train the model, you should first set it back in training mode with `model.train()`
@@ -1675,7 +1716,8 @@ class AutoModelForTokenClassification:
 
             model = AutoModelForTokenClassification.from_pretrained('bert-base-uncased')    # Download model and configuration from S3 and cache.
             model = AutoModelForTokenClassification.from_pretrained('./test/bert_model/')  # E.g. model was saved using `save_pretrained('./test/saved_model/')`
-            assert model.config.output_attention == True
+            model = AutoModelForTokenClassification.from_pretrained('bert-base-uncased', output_attentions=True)  # Update configuration during loading
+            assert model.config.output_attentions == True
             # Loading from a TF checkpoint file instead of a PyTorch model (slower)
             config = AutoConfig.from_json_file('./tf_model/bert_tf_model_config.json')
             model = AutoModelForTokenClassification.from_pretrained('./tf_model/bert_tf_checkpoint.ckpt.index', from_tf=True, config=config)
@@ -1703,12 +1745,12 @@ class AutoModelForTokenClassification:
 
 class AutoModelForMultipleChoice:
     r"""
-        :class:`~transformers.AutoModelForMultipleChoice` is a generic model class
-        that will be instantiated as one of the multiple choice model classes of the library
-        when created with the `AutoModelForMultipleChoice.from_pretrained(pretrained_model_name_or_path)`
-        class method.
+    :class:`~transformers.AutoModelForMultipleChoice` is a generic model class
+    that will be instantiated as one of the multiple choice model classes of the library
+    when created with the `AutoModelForMultipleChoice.from_pretrained(pretrained_model_name_or_path)`
+    class method.
 
-        This class cannot be instantiated using `__init__()` (throws an error).
+    This class cannot be instantiated using `__init__()` (throws an error).
     """
 
     def __init__(self):

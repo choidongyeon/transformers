@@ -2,7 +2,7 @@
 # There's no way to ignore "F401 '...' imported but unused" warnings in this
 # module, but to preserve other warnings. So, don't check this module at all.
 
-__version__ = "3.0.2"
+__version__ = "3.1.0"
 
 # Work around to update TensorFlow's absl.logging threshold which alters the
 # default Python logging output behavior when present.
@@ -17,8 +17,6 @@ else:
     absl.logging.set_stderrthreshold("info")
     absl.logging._warn_preinit_stderr = False
 
-import logging
-
 # Configurations
 from .configuration_albert import ALBERT_PRETRAINED_CONFIG_ARCHIVE_MAP, AlbertConfig
 from .configuration_auto import ALL_PRETRAINED_CONFIG_ARCHIVE_MAP, CONFIG_MAPPING, AutoConfig
@@ -31,8 +29,10 @@ from .configuration_dpr import DPR_PRETRAINED_CONFIG_ARCHIVE_MAP, DPRConfig
 from .configuration_electra import ELECTRA_PRETRAINED_CONFIG_ARCHIVE_MAP, ElectraConfig
 from .configuration_encoder_decoder import EncoderDecoderConfig
 from .configuration_flaubert import FLAUBERT_PRETRAINED_CONFIG_ARCHIVE_MAP, FlaubertConfig
+from .configuration_funnel import FUNNEL_PRETRAINED_CONFIG_ARCHIVE_MAP, FunnelConfig
 from .configuration_gpt2 import GPT2_PRETRAINED_CONFIG_ARCHIVE_MAP, GPT2Config
 from .configuration_longformer import LONGFORMER_PRETRAINED_CONFIG_ARCHIVE_MAP, LongformerConfig
+from .configuration_lxmert import LXMERT_PRETRAINED_CONFIG_ARCHIVE_MAP, LxmertConfig
 from .configuration_marian import MarianConfig
 from .configuration_mbart import MBartConfig
 from .configuration_mmbt import MMBTConfig
@@ -128,6 +128,7 @@ from .pipelines import (
     PipelineDataFormat,
     QuestionAnsweringPipeline,
     SummarizationPipeline,
+    Text2TextGenerationPipeline,
     TextClassificationPipeline,
     TextGenerationPipeline,
     TokenClassificationPipeline,
@@ -155,8 +156,10 @@ from .tokenization_dpr import (
 )
 from .tokenization_electra import ElectraTokenizer, ElectraTokenizerFast
 from .tokenization_flaubert import FlaubertTokenizer
+from .tokenization_funnel import FunnelTokenizer, FunnelTokenizerFast
 from .tokenization_gpt2 import GPT2Tokenizer, GPT2TokenizerFast
 from .tokenization_longformer import LongformerTokenizer, LongformerTokenizerFast
+from .tokenization_lxmert import LxmertTokenizer, LxmertTokenizerFast
 from .tokenization_mbart import MBartTokenizer
 from .tokenization_mobilebert import MobileBertTokenizer, MobileBertTokenizerFast
 from .tokenization_openai import OpenAIGPTTokenizer, OpenAIGPTTokenizerFast
@@ -184,9 +187,10 @@ from .tokenization_xlnet import SPIECE_UNDERLINE, XLNetTokenizer
 from .trainer_utils import EvalPrediction, set_seed
 from .training_args import TrainingArguments
 from .training_args_tf import TFTrainingArguments
+from .utils import logging
 
 
-logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
+logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
 if is_sklearn_available():
@@ -201,6 +205,7 @@ if is_torch_available():
     from .data.data_collator import (
         DataCollator,
         DataCollatorForLanguageModeling,
+        DataCollatorForNextSentencePrediction,
         DataCollatorForPermutationLanguageModeling,
         DataCollatorWithPadding,
         DataCollatorForNSP,
@@ -214,6 +219,7 @@ if is_torch_available():
         SquadDataset,
         SquadDataTrainingArguments,
         TextDataset,
+        TextDatasetForNextSentencePrediction,
     )
     from .generation_utils import top_k_top_p_filtering
     from .modeling_albert import (
@@ -325,6 +331,18 @@ if is_torch_available():
         FlaubertModel,
         FlaubertWithLMHeadModel,
     )
+    from .modeling_funnel import (
+        FUNNEL_PRETRAINED_MODEL_ARCHIVE_LIST,
+        FunnelBaseModel,
+        FunnelForMaskedLM,
+        FunnelForMultipleChoice,
+        FunnelForPreTraining,
+        FunnelForQuestionAnswering,
+        FunnelForSequenceClassification,
+        FunnelForTokenClassification,
+        FunnelModel,
+        load_tf_weights_in_funnel,
+    )
     from .modeling_gpt2 import (
         GPT2_PRETRAINED_MODEL_ARCHIVE_LIST,
         GPT2DoubleHeadsModel,
@@ -342,6 +360,15 @@ if is_torch_available():
         LongformerForTokenClassification,
         LongformerModel,
         LongformerSelfAttention,
+    )
+    from .modeling_lxmert import (
+        LxmertEncoder,
+        LxmertForPreTraining,
+        LxmertForQuestionAnswering,
+        LxmertModel,
+        LxmertPreTrainedModel,
+        LxmertVisualFeatureEncoder,
+        LxmertXLayer,
     )
     from .modeling_marian import MarianMTModel
     from .modeling_mbart import MBartForConditionalGeneration
@@ -419,6 +446,7 @@ if is_torch_available():
     )
     from .modeling_xlm_roberta import (
         XLM_ROBERTA_PRETRAINED_MODEL_ARCHIVE_LIST,
+        XLMRobertaForCausalLM,
         XLMRobertaForMaskedLM,
         XLMRobertaForMultipleChoice,
         XLMRobertaForQuestionAnswering,
@@ -441,6 +469,7 @@ if is_torch_available():
 
     # Optimization
     from .optimization import (
+        Adafactor,
         AdamW,
         get_constant_schedule,
         get_constant_schedule_with_warmup,
@@ -570,6 +599,14 @@ if is_tf_available():
         TFLongformerForQuestionAnswering,
         TFLongformerModel,
         TFLongformerSelfAttention,
+    )
+    from .modeling_tf_lxmert import (
+        TF_LXMERT_PRETRAINED_MODEL_ARCHIVE_LIST,
+        TFLxmertForPreTraining,
+        TFLxmertMainLayer,
+        TFLxmertModel,
+        TFLxmertPreTrainedModel,
+        TFLxmertVisualFeatureEncoder,
     )
     from .modeling_tf_mobilebert import (
         TF_MOBILEBERT_PRETRAINED_MODEL_ARCHIVE_LIST,

@@ -20,7 +20,6 @@
 
 import copy
 import json
-import logging
 import os
 import warnings
 from collections import OrderedDict, UserDict
@@ -41,6 +40,7 @@ from .file_utils import (
     is_torch_available,
     torch_required,
 )
+from .utils import logging
 
 
 if is_tf_available():
@@ -49,7 +49,7 @@ if is_torch_available():
     import torch
 
 
-logger = logging.getLogger(__name__)
+logger = logging.get_logger(__name__)
 
 VERY_LARGE_INTEGER = int(1e30)  # This is used to set the max input length for a model with infinite size input
 LARGE_INTEGER = int(1e20)  # This is used when we need something big but slightly smaller than VERY_LARGE_INTEGER
@@ -1609,11 +1609,11 @@ class PreTrainedTokenizerBase(SpecialTokensMixin):
                 )
                 tokenizer.add_tokens(token, special_tokens=bool(token in special_tokens))
 
-        # Check all our special tokens are registrered as "no split" token (we don't cut them) and are in the vocab
+        # Check all our special tokens are registered as "no split" token (we don't cut them) and are in the vocab
         added_tokens = tokenizer.sanitize_special_tokens()
         if added_tokens:
             logger.warning(
-                "Special tokens have been added in the vocabulary, make sure the associated word emebedding are fine-tuned or trained."
+                "Special tokens have been added in the vocabulary, make sure the associated word embedding are fine-tuned or trained."
             )
 
         return tokenizer
@@ -2440,6 +2440,7 @@ class PreTrainedTokenizerBase(SpecialTokensMixin):
         total_len = len_ids + len_pair_ids + (self.num_special_tokens_to_add(pair=pair) if add_special_tokens else 0)
 
         # Truncation: Handle max sequence length
+        overflowing_tokens = []
         if truncation_strategy != TruncationStrategy.DO_NOT_TRUNCATE and max_length and total_len > max_length:
             ids, pair_ids, overflowing_tokens = self.truncate_sequences(
                 ids,
@@ -2448,9 +2449,10 @@ class PreTrainedTokenizerBase(SpecialTokensMixin):
                 truncation_strategy=truncation_strategy,
                 stride=stride,
             )
-            if return_overflowing_tokens:
-                encoded_inputs["overflowing_tokens"] = overflowing_tokens
-                encoded_inputs["num_truncated_tokens"] = total_len - max_length
+
+        if return_overflowing_tokens:
+            encoded_inputs["overflowing_tokens"] = overflowing_tokens
+            encoded_inputs["num_truncated_tokens"] = total_len - max_length
 
         # Add special tokens
         if add_special_tokens:

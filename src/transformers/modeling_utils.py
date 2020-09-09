@@ -15,11 +15,11 @@
 # limitations under the License.
 
 import inspect
-import logging
 import os
 import re
+import warnings
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 import torch
 from torch import Tensor, device, dtype, nn
@@ -41,18 +41,17 @@ from .file_utils import (
     replace_return_docstrings,
 )
 from .generation_utils import GenerationMixin
+from .utils import logging
 
 
-logger = logging.getLogger(__name__)
-
+logger = logging.get_logger(__name__)
 
 try:
     from torch.nn import Identity
 except ImportError:
     # Older PyTorch compatibility
     class Identity(nn.Module):
-        r"""A placeholder identity operator that is argument-insensitive.
-        """
+        r"""A placeholder identity operator that is argument-insensitive."""
 
         def __init__(self, *args, **kwargs):
             super().__init__()
@@ -91,20 +90,6 @@ class ModuleUtilsMixin:
     """
     A few utilities for :obj:`torch.nn.Modules`, to be used as a mixin.
     """
-
-    def num_parameters(self, only_trainable: bool = False) -> int:
-        """
-        Get the number of (optionally, trainable) parameters in the model.
-
-        Args:
-            only_trainable (:obj:`bool`, `optional`, defaults to :obj:`False`):
-                Whether or not to return only the number of trainable parameters
-
-        Returns:
-            :obj:`int`: The number of parameters.
-        """
-        params = filter(lambda x: x.requires_grad, self.parameters()) if only_trainable else self.parameters()
-        return sum(p.numel() for p in params)
 
     @staticmethod
     def _hook_rss_memory_pre_forward(module, *args, **kwargs):
@@ -308,8 +293,76 @@ class ModuleUtilsMixin:
         elif head_mask.dim() == 2:
             head_mask = head_mask.unsqueeze(1).unsqueeze(-1).unsqueeze(-1)  # We can specify head_mask for each layer
         assert head_mask.dim() == 5, f"head_mask.dim != 5, instead {head_mask.dim()}"
-        head_mask = head_mask.to(dtype=self.dtype)  # switch to fload if need + fp16 compatibility
+        head_mask = head_mask.to(dtype=self.dtype)  # switch to float if need + fp16 compatibility
         return head_mask
+
+    def num_parameters(self, only_trainable: bool = False, exclude_embeddings: bool = False) -> int:
+        """
+        Get number of (optionally, trainable or non-embeddings) parameters in the module.
+
+        Args:
+            only_trainable (:obj:`bool`, `optional`, defaults to :obj:`False`):
+                Whether or not to return only the number of trainable parameters
+
+            exclude_embeddings (:obj:`bool`, `optional`, defaults to :obj:`False`):
+                Whether or not to return only the number of non-embeddings parameters
+
+        Returns:
+            :obj:`int`: The number of parameters.
+        """
+
+        def parameter_filter(x):
+            return (x.requires_grad or not only_trainable) and not (
+                isinstance(x, torch.nn.Embedding) and exclude_embeddings
+            )
+
+        params = filter(parameter_filter, self.parameters()) if only_trainable else self.parameters()
+        return sum(p.numel() for p in params)
+
+    def estimate_tokens(self, input_dict: Dict[str, Union[torch.Tensor, Any]]) -> int:
+        """
+        Helper function to estimate the total number of tokens from the model inputs.
+
+        Args:
+            inputs (:obj:`dict`): The model inputs.
+
+        Returns:
+            :obj:`int`: The total number of tokens.
+        """
+        token_inputs = [tensor for key, tensor in input_dict.items() if "input" in key]
+        if token_inputs:
+            return sum([token_input.numel() for token_input in token_inputs])
+        else:
+            warnings.warn(
+                "Could not estimate the number of tokens of the input, floating-point operations will not be computed"
+            )
+            return 0
+
+    def floating_point_ops(
+        self, input_dict: Dict[str, Union[torch.Tensor, Any]], exclude_embeddings: bool = True
+    ) -> int:
+        """
+        Get number of (optionally, non-embeddings) floating-point operations for the forward and backward passes of a
+        batch with this transformer model. Default approximation neglects the quadratic dependency on the number of
+        tokens (valid if :obj:`12 * d_model << sequence_length`) as laid out in `this paper <https://arxiv.org/pdf/2001.08361.pdf>`__ section
+        2.1. Should be  overriden for transformers with parameter re-use e.g. Albert or Universal Transformers, or
+        if doing long-range modeling with very high sequence lengths.
+
+        Args:
+            batch_size (:obj:`int`):
+                The batch size for the forward pass.
+
+            sequence_length (:obj:`int`):
+                The number of tokens in each line of the batch.
+
+            exclude_embeddings (:obj:`bool`, `optional`, defaults to :obj:`True`):
+                Whether or not to count embedding and softmax operations.
+
+        Returns:
+            :obj:`int`: The number of floating-point operations.
+        """
+
+        return 6 * self.estimate_tokens(input_dict) * self.num_parameters(exclude_embeddings=exclude_embeddings)
 
 
 class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
@@ -488,8 +541,7 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
             )
 
     def _tie_or_clone_weights(self, output_embeddings, input_embeddings):
-        """ Tie or clone module weights depending of whether we are using TorchScript or not
-        """
+        """Tie or clone module weights depending of whether we are using TorchScript or not"""
         if self.config.torchscript:
             output_embeddings.weight = nn.Parameter(input_embeddings.weight.clone())
         else:
@@ -498,7 +550,10 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
         if getattr(output_embeddings, "bias", None) is not None:
             output_embeddings.bias.data = torch.nn.functional.pad(
                 output_embeddings.bias.data,
-                (0, output_embeddings.weight.shape[0] - output_embeddings.bias.shape[0],),
+                (
+                    0,
+                    output_embeddings.weight.shape[0] - output_embeddings.bias.shape[0],
+                ),
                 "constant",
                 0,
             )
@@ -731,7 +786,7 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
                 our S3 (faster). Should be set to :obj:`False` for checkpoints larger than 20GB.
             kwargs (remaining dictionary of keyword arguments, `optional`):
                 Can be used to update the configuration object (after it being loaded) and initiate the model (e.g.,
-                :obj:`output_attention=True`). Behaves differently depending on whether a ``config`` is provided or
+                :obj:`output_attentions=True`). Behaves differently depending on whether a ``config`` is provided or
                 automatically loaded:
 
                     - If a configuration is provided with ``config``, ``**kwargs`` will be directly passed to the
@@ -751,8 +806,8 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
             # Model was saved using `save_pretrained('./test/saved_model/')` (for example purposes, not runnable).
             model = BertModel.from_pretrained('./test/saved_model/')
             # Update configuration during loading.
-            model = BertModel.from_pretrained('bert-base-uncased', output_attention=True)
-            assert model.config.output_attention == True
+            model = BertModel.from_pretrained('bert-base-uncased', output_attentions=True)
+            assert model.config.output_attentions == True
             # Loading from a TF checkpoint file instead of a PyTorch model (slower, for example purposes, not runnable).
             config = BertConfig.from_json_file('./tf_model/my_tf_model_config.json')
             model = BertModel.from_pretrained('./tf_model/my_tf_checkpoint.ckpt.index', from_tf=True, config=config)
@@ -906,7 +961,13 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
             def load(module: nn.Module, prefix=""):
                 local_metadata = {} if metadata is None else metadata.get(prefix[:-1], {})
                 module._load_from_state_dict(
-                    state_dict, prefix, local_metadata, True, missing_keys, unexpected_keys, error_msgs,
+                    state_dict,
+                    prefix,
+                    local_metadata,
+                    True,
+                    missing_keys,
+                    unexpected_keys,
+                    error_msgs,
                 )
                 for name, child in module._modules.items():
                     if child is not None:
@@ -1242,24 +1303,24 @@ class SQuADHead(nn.Module):
         return_dict: bool = False,
     ) -> Union[SquadHeadOutput, Tuple[torch.FloatTensor]]:
         """
-    Args:
-        hidden_states (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, seq_len, hidden_size)`):
-            Final hidden states of the model on the sequence tokens.
-        start_positions (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
-            Positions of the first token for the labeled span.
-        end_positions (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
-            Positions of the last token for the labeled span.
-        cls_index (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
-            Position of the CLS token for each sentence in the batch. If :obj:`None`, takes the last token.
-        is_impossible (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
-            Whether the question has a possible answer in the paragraph or not.
-        p_mask (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, seq_len)`, `optional`):
-            Mask for tokens at invalid position, such as query and special symbols (PAD, SEP, CLS).
-            1.0 means token should be masked.
-        return_dict (:obj:`bool`, `optional`, defaults to :obj:`False`):
-            Whether or not to return a :class:`~transformers.file_utils.ModelOuput` instead of a plain tuple.
+        Args:
+            hidden_states (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, seq_len, hidden_size)`):
+                Final hidden states of the model on the sequence tokens.
+            start_positions (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
+                Positions of the first token for the labeled span.
+            end_positions (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
+                Positions of the last token for the labeled span.
+            cls_index (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
+                Position of the CLS token for each sentence in the batch. If :obj:`None`, takes the last token.
+            is_impossible (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
+                Whether the question has a possible answer in the paragraph or not.
+            p_mask (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, seq_len)`, `optional`):
+                Mask for tokens at invalid position, such as query and special symbols (PAD, SEP, CLS).
+                1.0 means token should be masked.
+            return_dict (:obj:`bool`, `optional`, defaults to :obj:`False`):
+                Whether or not to return a :class:`~transformers.file_utils.ModelOuput` instead of a plain tuple.
 
-    Returns:
+        Returns:
         """
         start_logits = self.start_logits(hidden_states, p_mask=p_mask)
 
@@ -1375,7 +1436,7 @@ class SequenceSummary(nn.Module):
             self.summary = nn.Linear(config.hidden_size, num_classes)
 
         activation_string = getattr(config, "summary_activation", None)
-        self.activation: Callable = (get_activation(activation_string) if activation_string else Identity())
+        self.activation: Callable = get_activation(activation_string) if activation_string else Identity()
 
         self.first_dropout = Identity()
         if hasattr(config, "summary_first_dropout") and config.summary_first_dropout > 0:
@@ -1409,7 +1470,11 @@ class SequenceSummary(nn.Module):
             output = hidden_states.mean(dim=1)
         elif self.summary_type == "cls_index":
             if cls_index is None:
-                cls_index = torch.full_like(hidden_states[..., :1, :], hidden_states.shape[-2] - 1, dtype=torch.long,)
+                cls_index = torch.full_like(
+                    hidden_states[..., :1, :],
+                    hidden_states.shape[-2] - 1,
+                    dtype=torch.long,
+                )
             else:
                 cls_index = cls_index.unsqueeze(-1).unsqueeze(-1)
                 cls_index = cls_index.expand((-1,) * (cls_index.dim() - 1) + (hidden_states.size(-1),))

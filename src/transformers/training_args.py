@@ -1,11 +1,11 @@
 import dataclasses
 import json
-import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
 from .file_utils import cached_property, is_torch_available, is_torch_tpu_available, torch_required
+from .utils import logging
 
 
 if is_torch_available():
@@ -15,7 +15,7 @@ if is_torch_tpu_available():
     import torch_xla.core.xla_model as xm
 
 
-logger = logging.getLogger(__name__)
+logger = logging.get_logger(__name__)
 
 
 def default_logdir() -> str:
@@ -60,6 +60,12 @@ class TrainingArguments:
             The batch size per GPU/TPU core/CPU for evaluation.
         gradient_accumulation_steps: (:obj:`int`, `optional`, defaults to 1):
             Number of updates steps to accumulate the gradients for, before performing a backward/update pass.
+
+            .. warning::
+
+                When using gradient accumulation, one step is counted as one step with backward pass. Therefore,
+                logging, evaluation, save will be conducted every ``gradient_accumulation_steps * xxx_step`` training
+                examples.
         learning_rate (:obj:`float`, `optional`, defaults to 5e-5):
             The initial learning rate for Adam.
         weight_decay (:obj:`float`, `optional`, defaults to 0):
@@ -141,10 +147,12 @@ class TrainingArguments:
     do_eval: bool = field(default=False, metadata={"help": "Whether to run eval on the dev set."})
     do_predict: bool = field(default=False, metadata={"help": "Whether to run predictions on the test set."})
     evaluate_during_training: bool = field(
-        default=False, metadata={"help": "Run evaluation during training at each logging step."},
+        default=False,
+        metadata={"help": "Run evaluation during training at each logging step."},
     )
     prediction_loss_only: bool = field(
-        default=False, metadata={"help": "When performing evaluation and predictions, only returns the loss."},
+        default=False,
+        metadata={"help": "When performing evaluation and predictions, only returns the loss."},
     )
 
     per_device_train_batch_size: int = field(
