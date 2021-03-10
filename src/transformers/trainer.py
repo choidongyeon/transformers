@@ -1004,6 +1004,7 @@ class Trainer:
                     break
 
         for epoch in range(epochs_trained, num_train_epochs):
+            torch.cuda.nvtx.range_push('DATALOADER')
             if isinstance(train_dataloader, DataLoader) and isinstance(train_dataloader.sampler, DistributedSampler):
                 train_dataloader.sampler.set_epoch(epoch)
 
@@ -1014,6 +1015,7 @@ class Trainer:
                 epoch_iterator = parallel_loader
             else:
                 epoch_iterator = train_dataloader
+            torch.cuda.nvtx.range_pop() # DATALOADER
 
             # Reset the past mems state at the beginning of each epoch if necessary.
             if self.args.past_index >= 0:
@@ -1026,7 +1028,15 @@ class Trainer:
             )
             self.control = self.callback_handler.on_epoch_begin(self.args, self.state, self.control)
 
-            for step, inputs in enumerate(epoch_iterator):
+            epoch_iterator = iter(epoch_iterator)
+
+            # for step, inputs in enumerate(epoch_iterator):
+            for step in range(len(epoch_iterator)):
+                torch.cuda.nvtx.range_push('EPOCH_ITERATOR-DATA_LOAD')
+                inputs = next(epoch_iterator)
+                torch.cuda.nvtx.range_pop() # EPOCH_ITERATOR-DATA_LOAD
+
+                torch.cuda.nvtx.range_push('TRAIN_STEP')
 
                 # Skip past any already trained steps if resuming training
                 if steps_trained_in_current_epoch > 0:
@@ -1036,6 +1046,7 @@ class Trainer:
                 if (step + 1) % self.args.gradient_accumulation_steps == 0:
                     self.control = self.callback_handler.on_step_begin(self.args, self.state, self.control)
 
+                torch.cuda.nvtx.range_push('TRAIN_STEP-TRAINING_STEP')
                 if (
                     ((step + 1) % self.args.gradient_accumulation_steps != 0)
                     and self.args.local_rank != -1
@@ -1047,16 +1058,19 @@ class Trainer:
                 else:
                     tr_loss += self.training_step(model, inputs)
                 self._total_flos += float(self.floating_point_ops(inputs))
+                torch.cuda.nvtx.range_pop() # TRAIN_STEP-TRAINING_STEP
 
                 # Optimizer step for deepspeed must be called on every step regardless of the value of gradient_accumulation_steps
                 if self.deepspeed:
                     self.deepspeed.step()
-
+                
+                torch.cuda.nvtx.range_push('TRAIN_STEP-GRADIENT_ACCUMULATION_STEP')
                 if (step + 1) % self.args.gradient_accumulation_steps == 0 or (
                     # last step in epoch but step is always smaller than gradient_accumulation_steps
                     steps_in_epoch <= self.args.gradient_accumulation_steps
                     and (step + 1) == steps_in_epoch
                 ):
+                    torch.cuda.nvtx.range_push('TRAIN_STEP-GRADIENT_CLIPPING')
                     # Gradient clipping
                     if self.args.max_grad_norm is not None and self.args.max_grad_norm > 0 and not self.deepspeed:
                         # deepspeed does its own clipping
@@ -1077,7 +1091,9 @@ class Trainer:
                                 amp.master_params(self.optimizer) if self.use_apex else model.parameters(),
                                 self.args.max_grad_norm,
                             )
+                    torch.cuda.nvtx.range_pop() # TRAIN_STEP-GRADIENT_CLIPPING
 
+                    torch.cuda.nvtx.range_push('TRAIN_STEP-OPTIMIZER_STEP')
                     # Optimizer step
                     if self.deepspeed:
                         pass  # called outside the loop
@@ -1089,21 +1105,32 @@ class Trainer:
                     else:
                         self.optimizer.step()
 
+                    torch.cuda.nvtx.range_pop() # TRAIN_STEP-OPTIMIZER_STEP
+
                     if not self.deepspeed:
                         self.lr_scheduler.step()
 
+                    torch.cuda.nvtx.range_push('TRAIN_STEP-RESET_GRADIENT')
                     model.zero_grad()
+                    torch.cuda.nvtx.range_pop() # TRAIN_STEP-RESET_GRADIENT
                     self.state.global_step += 1
                     self.state.epoch = epoch + (step + 1) / steps_in_epoch
                     self.control = self.callback_handler.on_step_end(self.args, self.state, self.control)
 
+                    torch.cuda.nvtx.range_push('TRAIN_STEP-LOG_SAVE_EVALUATE')
                     self._maybe_log_save_evaluate(tr_loss, model, trial, epoch)
+                    torch.cuda.nvtx.range_pop() # TRAIN_STEP-LOG_SAVE_EVALUATE
 
                 if self.control.should_epoch_stop or self.control.should_training_stop:
                     break
 
+                torch.cuda.nvtx.range_pop() # TRAIN_STEP-GRADIENT_ACCUMULATION_STEP
+                torch.cuda.nvtx.range_pop() # TRAIN_STEP
+
+            torch.cuda.nvtx.range_push('LOG_SAVE_EVALUATE')
             self.control = self.callback_handler.on_epoch_end(self.args, self.state, self.control)
             self._maybe_log_save_evaluate(tr_loss, model, trial, epoch)
+            torch.cuda.nvtx.range_pop() # LOG_SAVE_EVALUATE
 
             if self.args.tpu_metrics_debug or self.args.debug:
                 if is_torch_tpu_available():
@@ -1422,14 +1449,18 @@ class Trainer:
         Return:
             :obj:`torch.Tensor`: The tensor with training loss on this batch.
         """
+        torch.cuda.nvtx.range_push('TRAINING_STEP-FORWARD_PASS')
         model.train()
         inputs = self._prepare_inputs(inputs)
+        torch.cuda.nvtx.range_pop()
 
+        torch.cuda.nvtx.range_push('TRAINING_STEP-COMPUTE_LOSS')
         if self.use_amp:
             with autocast():
                 loss = self.compute_loss(model, inputs)
         else:
             loss = self.compute_loss(model, inputs)
+        torch.cuda.nvtx.range_pop()
 
         if self.args.n_gpu > 1:
             loss = loss.mean()  # mean() to average on multi-gpu parallel training
@@ -1438,6 +1469,7 @@ class Trainer:
             # deepspeed handles loss scaling by gradient_accumulation_steps in its `backward`
             loss = loss / self.args.gradient_accumulation_steps
 
+        torch.cuda.nvtx.range_push('TRAINING_STEP-BACKWARD_PASS')
         if self.use_amp:
             self.scaler.scale(loss).backward()
         elif self.use_apex:
@@ -1448,6 +1480,7 @@ class Trainer:
             loss = self.deepspeed.backward(loss)
         else:
             loss.backward()
+        torch.cuda.nvtx.range_pop()
 
         return loss.detach()
 
@@ -1645,6 +1678,8 @@ class Trainer:
         eval_dataloader = self.get_eval_dataloader(eval_dataset)
         start_time = time.time()
 
+        torch.cuda.nvtx.range_push('EVALUATE-PREDICTION_LOOP')
+
         output = self.prediction_loop(
             eval_dataloader,
             description="Evaluation",
@@ -1654,6 +1689,7 @@ class Trainer:
             ignore_keys=ignore_keys,
             metric_key_prefix=metric_key_prefix,
         )
+        torch.cuda.nvtx.range_pop() # EVALUATE-PREDICTION_LOOP
 
         n_samples = len(eval_dataset if eval_dataset is not None else self.eval_dataset)
         output.metrics.update(speed_metrics(metric_key_prefix, start_time, n_samples))
@@ -1772,7 +1808,9 @@ class Trainer:
             preds_gatherer = DistributedTensorGatherer(world_size, num_examples)
             labels_gatherer = DistributedTensorGatherer(world_size, num_examples)
 
+        torch.cuda.nvtx.range_push('PREDICTION_LOOP-MODEL_EVAL')
         model.eval()
+        torch.cuda.nvtx.range_pop() # PREDICTION_LOOP-MODEL_EVAL
 
         if is_torch_tpu_available():
             dataloader = pl.ParallelLoader(dataloader, [self.args.device]).per_device_loader(self.args.device)
@@ -1782,8 +1820,19 @@ class Trainer:
 
         self.callback_handler.eval_dataloader = dataloader
 
-        for step, inputs in enumerate(dataloader):
+        dataloader = iter(dataloader)
+
+        for step in range(len(dataloader)):
+        # for step, inputs in enumerate(dataloader):
+            torch.cuda.nvtx.range_push('PREDICTION_LOOP-DATA_LOAD')
+            inputs = next(dataloader)
+            torch.cuda.nvtx.range_pop() # PREDICTION_LOOP-DATA_LOAD
+
+            torch.cuda.nvtx.range_push('PREDICTION_LOOP-STEP')
+            torch.cuda.nvtx.range_push('PREDICTION_LOOP-PREDICTION_STEP')
             loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
+            torch.cuda.nvtx.range_pop() # PREDICTION_LOOP-PREDICTION_STEP
+
             if loss is not None:
                 losses = loss.repeat(batch_size)
                 losses_host = losses if losses_host is None else torch.cat((losses_host, losses), dim=0)
@@ -1794,6 +1843,7 @@ class Trainer:
             self.control = self.callback_handler.on_prediction_step(self.args, self.state, self.control)
 
             # Gather all tensors and put them back on the CPU if we have done enough accumulation steps.
+            torch.cuda.nvtx.range_push('PREDICTION_LOOP-PREDICTION_STEP-GATHER_TENSORS')
             if self.args.eval_accumulation_steps is not None and (step + 1) % self.args.eval_accumulation_steps == 0:
                 eval_losses_gatherer.add_arrays(self._gather_and_numpify(losses_host, "eval_losses"))
                 if not prediction_loss_only:
@@ -1802,21 +1852,26 @@ class Trainer:
 
                 # Set back to None to begin a new accumulation
                 losses_host, preds_host, labels_host = None, None, None
+            torch.cuda.nvtx.range_pop() # PREDICTION_LOOP-PREDICTION_STEP-GATHER_TENSORS
+            torch.cuda.nvtx.range_pop() # PREDICTION_LOOP-STEP
 
         if self.args.past_index and hasattr(self, "_past"):
             # Clean the state at the end of the evaluation loop
             delattr(self, "_past")
 
         # Gather all remaining tensors and put them back on the CPU
+        torch.cuda.nvtx.range_push('PREDICTION_LOOP-GATHER_TENSORS')
         eval_losses_gatherer.add_arrays(self._gather_and_numpify(losses_host, "eval_losses"))
         if not prediction_loss_only:
             preds_gatherer.add_arrays(self._gather_and_numpify(preds_host, "eval_preds"))
             labels_gatherer.add_arrays(self._gather_and_numpify(labels_host, "eval_label_ids"))
+        torch.cuda.nvtx.range_pop() # PREDICTION_LOOP-GATHER_TENSORS
 
         eval_loss = eval_losses_gatherer.finalize()
         preds = preds_gatherer.finalize() if not prediction_loss_only else None
         label_ids = labels_gatherer.finalize() if not prediction_loss_only else None
 
+        torch.cuda.nvtx.range_push('PREDICTION_LOOP-COMPUTE_METRICS')
         if self.compute_metrics is not None and preds is not None and label_ids is not None:
             metrics = self.compute_metrics(EvalPrediction(predictions=preds, label_ids=label_ids))
         else:
@@ -1824,6 +1879,7 @@ class Trainer:
 
         if eval_loss is not None:
             metrics[f"{metric_key_prefix}_loss"] = eval_loss.mean().item()
+        torch.cuda.nvtx.range_pop() # PREDICTION_LOOP-COMPUTE_METRICS
 
         # Prefix all keys with metric_key_prefix + '_'
         for key in list(metrics.keys()):
