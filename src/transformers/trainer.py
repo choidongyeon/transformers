@@ -147,7 +147,6 @@ if is_sagemaker_distributed_available():
     from smdistributed.dataparallel.torch.parallel.distributed import DistributedDataParallel as DDP
 else:
     import torch.distributed as dist
-    from torch.distributed.algorithms.ddp_comm_hooks.default_hooks import fp16_compress_hook
 if TYPE_CHECKING:
     import optuna
 
@@ -794,7 +793,6 @@ class Trainer:
                 output_device=self.args.local_rank,
                 find_unused_parameters=find_unused_parameters,
             )
-            model.register_comm_hook(state=None, hook=fp16_compress_hook)
 
         return model
 
@@ -1047,25 +1045,26 @@ class Trainer:
                 if (step + 1) % self.args.gradient_accumulation_steps == 0:
                     self.control = self.callback_handler.on_step_begin(self.args, self.state, self.control)
 
-                torch.cuda.nvtx.range_push('TRAIN_STEP-TRAINING_STEP')
                 if (
                     ((step + 1) % self.args.gradient_accumulation_steps != 0)
                     and self.args.local_rank != -1
                     and not self.args.deepspeed
                 ):
+                    torch.cuda.nvtx.range_push('TRAIN_STEP-NON_GRADIENT_ACCUMULATION_STEP')
                     # Avoid unnecessary DDP synchronization since there will be no backward pass on this example.
                     with model.no_sync():
                         tr_loss += self.training_step(model, inputs)
+                    torch.cuda.nvtx.range_pop() # TRAIN_STEP-NON_GRADIENT_ACCUMULATION_STEP
                 else:
+                    torch.cuda.nvtx.range_push('TRAIN_STEP-GRADIENT_ACCUMULATION_STEP')
                     tr_loss += self.training_step(model, inputs)
+                    torch.cuda.nvtx.range_pop() # TRAIN_STEP-GRADIENT_ACCUMULATION_STEP
                 self._total_flos += float(self.floating_point_ops(inputs))
-                torch.cuda.nvtx.range_pop() # TRAIN_STEP-TRAINING_STEP
 
                 # Optimizer step for deepspeed must be called on every step regardless of the value of gradient_accumulation_steps
                 if self.deepspeed:
                     self.deepspeed.step()
                 
-                torch.cuda.nvtx.range_push('TRAIN_STEP-GRADIENT_ACCUMULATION_STEP')
                 if (step + 1) % self.args.gradient_accumulation_steps == 0 or (
                     # last step in epoch but step is always smaller than gradient_accumulation_steps
                     steps_in_epoch <= self.args.gradient_accumulation_steps
@@ -1125,7 +1124,6 @@ class Trainer:
                 if self.control.should_epoch_stop or self.control.should_training_stop:
                     break
 
-                torch.cuda.nvtx.range_pop() # TRAIN_STEP-GRADIENT_ACCUMULATION_STEP
                 torch.cuda.nvtx.range_pop() # TRAIN_STEP
 
             torch.cuda.nvtx.range_push('LOG_SAVE_EVALUATE')
