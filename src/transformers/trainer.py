@@ -1642,9 +1642,12 @@ class Trainer:
         if eval_dataset is not None and not isinstance(eval_dataset, collections.abc.Sized):
             raise ValueError("eval_dataset must implement __len__")
 
+        torch.cuda.nvtx.range_push('EVALUATE-get_dataloader')
         eval_dataloader = self.get_eval_dataloader(eval_dataset)
+        torch.cuda.nvtx.range_pop()  # EVALUATE-get_dataloader
         start_time = time.time()
 
+        torch.cuda.nvtx.range_push('EVALUATE-prediction_loop')
         output = self.prediction_loop(
             eval_dataloader,
             description="Evaluation",
@@ -1654,6 +1657,7 @@ class Trainer:
             ignore_keys=ignore_keys,
             metric_key_prefix=metric_key_prefix,
         )
+        torch.cuda.nvtx.range_pop()  # EVALUATE-prediction_loop
 
         n_samples = len(eval_dataset if eval_dataset is not None else self.eval_dataset)
         output.metrics.update(speed_metrics(metric_key_prefix, start_time, n_samples))
@@ -1733,6 +1737,7 @@ class Trainer:
 
         Works both with or without labels.
         """
+        torch.cuda.nvtx.range_push('prediction_loop')
         if not isinstance(dataloader.dataset, collections.abc.Sized):
             raise ValueError("dataset must implement __len__")
         prediction_loss_only = (
@@ -1744,12 +1749,16 @@ class Trainer:
             # flagging only for when --do_train wasn't passed as only then it's redundant
             logger.info("Detected the deepspeed argument but it will not be used for evaluation")
 
+        torch.cuda.nvtx.range_push('PREDICTION_LOOP-_wrap_model')
         model = self._wrap_model(self.model, training=False)
+        torch.cuda.nvtx.range_pop()  # PREDICTION_LOOP-_wrap_model
 
         # if full fp16 is wanted on eval and this ``evaluation`` or ``predict`` isn't called while
         # ``train`` is running, half it first and then put on device
+        torch.cuda.nvtx.range_push('PREDICTION_LOOP-half')
         if not self.is_in_train and self.args.fp16_full_eval:
             model = model.half().to(self.args.device)
+        torch.cuda.nvtx.range_pop() # PREDICTION_LOOP-half
 
         batch_size = dataloader.batch_size
         num_examples = self.num_examples(dataloader)
@@ -1767,10 +1776,12 @@ class Trainer:
             world_size = dist.get_world_size()
         world_size = max(1, world_size)
 
+        torch.cuda.nvtx.range_push('PREDICTION_LOOP-initialize_gatherer')
         eval_losses_gatherer = DistributedTensorGatherer(world_size, num_examples, make_multiple_of=batch_size)
         if not prediction_loss_only:
             preds_gatherer = DistributedTensorGatherer(world_size, num_examples)
             labels_gatherer = DistributedTensorGatherer(world_size, num_examples)
+        torch.cuda.nvtx.range_pop() # PREDICTION_LOOP-initialize_gatherer
 
         model.eval()
 
@@ -1783,10 +1794,14 @@ class Trainer:
         self.callback_handler.eval_dataloader = dataloader
 
         for step, inputs in enumerate(dataloader):
+            torch.cuda.nvtx.range_push('PREDICTION_LOOP - PREDICTION_STEP')
             loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
+            torch.cuda.nvtx.range_pop()  # PREDICTION_STEP
+            torch.cuda.nvtx.range_push('PREDICTION_LOOP - LOSSES_HOST')
             if loss is not None:
                 losses = loss.repeat(batch_size)
                 losses_host = losses if losses_host is None else torch.cat((losses_host, losses), dim=0)
+            torch.cuda.nvtx.range_pop()  # PREDICTION_LOOP - LOSSES_HOST
             if logits is not None:
                 preds_host = logits if preds_host is None else nested_concat(preds_host, logits, padding_index=-100)
             if labels is not None:
@@ -1808,18 +1823,27 @@ class Trainer:
             delattr(self, "_past")
 
         # Gather all remaining tensors and put them back on the CPU
-        eval_losses_gatherer.add_arrays(self._gather_and_numpify(losses_host, "eval_losses"))
+        torch.cuda.nvtx.range_push('GATHER_TENSORS-NUMPIFY')
+        arrs = self._gather_and_numpify(losses_host, "eval_losses")
+        torch.cuda.nvtx.range_pop() # GATHER_TENSORS-NUMPIFY
+        torch.cuda.nvtx.range_push('GATHER_TENSORS-ADD')
+        eval_losses_gatherer.add_arrays(arrs)
+        torch.cuda.nvtx.range_pop() # GATHER_TENSORS-ADD
         if not prediction_loss_only:
             preds_gatherer.add_arrays(self._gather_and_numpify(preds_host, "eval_preds"))
             labels_gatherer.add_arrays(self._gather_and_numpify(labels_host, "eval_label_ids"))
 
+        torch.cuda.nvtx.range_push('GATHER_TENSORS-FINALIZE')
         eval_loss = eval_losses_gatherer.finalize()
         preds = preds_gatherer.finalize() if not prediction_loss_only else None
         label_ids = labels_gatherer.finalize() if not prediction_loss_only else None
+        torch.cuda.nvtx.range_pop()  # GATHER_TENSORS-FINALIZE
 
+        torch.cuda.nvtx.range_push('metrics')
         if self.compute_metrics is not None and preds is not None and label_ids is not None:
             metrics = self.compute_metrics(EvalPrediction(predictions=preds, label_ids=label_ids))
         else:
+            # this is run
             metrics = {}
 
         if eval_loss is not None:
@@ -1829,7 +1853,9 @@ class Trainer:
         for key in list(metrics.keys()):
             if not key.startswith(f"{metric_key_prefix}_"):
                 metrics[f"{metric_key_prefix}_{key}"] = metrics.pop(key)
+        torch.cuda.nvtx.range_pop() # metrics
 
+        torch.cuda.nvtx.range_pop() # prediction_loop
         return PredictionOutput(predictions=preds, label_ids=label_ids, metrics=metrics)
 
     def _gather_and_numpify(self, tensors, name):
@@ -1877,7 +1903,9 @@ class Trainer:
             labels (each being optional).
         """
         has_labels = all(inputs.get(k) is not None for k in self.label_names)
+        torch.cuda.nvtx.range_push('PREDICTION_STEP - PREPARE_INPUTS')
         inputs = self._prepare_inputs(inputs)
+        torch.cuda.nvtx.range_pop()  # PREDICTION_STEP - PREPARE_INPUTS
         if ignore_keys is None:
             if hasattr(self.model, "config"):
                 ignore_keys = getattr(self.model.config, "keys_to_ignore_at_inference", [])
@@ -1894,12 +1922,15 @@ class Trainer:
 
         with torch.no_grad():
             if has_labels:
+                torch.cuda.nvtx.range_push('PREDICTION_STEP - COMPUTE_PREDICTION')
                 loss, outputs = self.compute_loss(model, inputs, return_outputs=True)
                 loss = loss.mean().detach()
                 if isinstance(outputs, dict):
+                    # outputs is dictionary
                     logits = tuple(v for k, v in outputs.items() if k not in ignore_keys + ["loss"])
                 else:
                     logits = outputs[1:]
+                torch.cuda.nvtx.range_pop()  # COMPUTE_PREDICTION
             else:
                 loss = None
                 if self.use_amp:
