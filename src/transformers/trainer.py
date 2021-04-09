@@ -1777,7 +1777,7 @@ class Trainer:
         world_size = max(1, world_size)
 
         torch.cuda.nvtx.range_push('PREDICTION_LOOP-initialize_gatherer')
-        eval_losses_gatherer = DistributedTensorGatherer(world_size, num_examples, make_multiple_of=batch_size)
+        # eval_losses_gatherer = DistributedTensorGatherer(world_size, num_examples, make_multiple_of=batch_size)
         if not prediction_loss_only:
             preds_gatherer = DistributedTensorGatherer(world_size, num_examples)
             labels_gatherer = DistributedTensorGatherer(world_size, num_examples)
@@ -1792,6 +1792,7 @@ class Trainer:
             self._past = None
 
         self.callback_handler.eval_dataloader = dataloader
+        total_loss = torch.tensor(0.0).to(self.args.device)
 
         for step, inputs in enumerate(dataloader):
             torch.cuda.nvtx.range_push('PREDICTION_LOOP - PREDICTION_STEP')
@@ -1799,6 +1800,7 @@ class Trainer:
             torch.cuda.nvtx.range_pop()  # PREDICTION_STEP
             torch.cuda.nvtx.range_push('PREDICTION_LOOP - LOSSES_HOST')
             if loss is not None:
+                total_loss += loss
                 losses = loss.repeat(batch_size)
                 losses_host = losses if losses_host is None else torch.cat((losses_host, losses), dim=0)
             torch.cuda.nvtx.range_pop()  # PREDICTION_LOOP - LOSSES_HOST
@@ -1810,7 +1812,7 @@ class Trainer:
 
             # Gather all tensors and put them back on the CPU if we have done enough accumulation steps.
             if self.args.eval_accumulation_steps is not None and (step + 1) % self.args.eval_accumulation_steps == 0:
-                eval_losses_gatherer.add_arrays(self._gather_and_numpify(losses_host, "eval_losses"))
+                # eval_losses_gatherer.add_arrays(self._gather_and_numpify(losses_host, "eval_losses"))
                 if not prediction_loss_only:
                     preds_gatherer.add_arrays(self._gather_and_numpify(preds_host, "eval_preds"))
                     labels_gatherer.add_arrays(self._gather_and_numpify(labels_host, "eval_label_ids"))
@@ -1821,20 +1823,23 @@ class Trainer:
         if self.args.past_index and hasattr(self, "_past"):
             # Clean the state at the end of the evaluation loop
             delattr(self, "_past")
+            
 
         # Gather all remaining tensors and put them back on the CPU
-        torch.cuda.nvtx.range_push('GATHER_TENSORS-NUMPIFY')
-        arrs = self._gather_and_numpify(losses_host, "eval_losses")
-        torch.cuda.nvtx.range_pop() # GATHER_TENSORS-NUMPIFY
-        torch.cuda.nvtx.range_push('GATHER_TENSORS-ADD')
-        eval_losses_gatherer.add_arrays(arrs)
-        torch.cuda.nvtx.range_pop() # GATHER_TENSORS-ADD
+        eval_loss = total_loss.cpu() / len(dataloader)
+
+        # torch.cuda.nvtx.range_push('GATHER_TENSORS-NUMPIFY')
+        # arrs = self._gather_and_numpify(losses_host, "eval_losses")
+        # torch.cuda.nvtx.range_pop() # GATHER_TENSORS-NUMPIFY
+        # torch.cuda.nvtx.range_push('GATHER_TENSORS-ADD')
+        # eval_losses_gatherer.add_arrays(arrs)
+        # torch.cuda.nvtx.range_pop() # GATHER_TENSORS-ADD
         if not prediction_loss_only:
             preds_gatherer.add_arrays(self._gather_and_numpify(preds_host, "eval_preds"))
             labels_gatherer.add_arrays(self._gather_and_numpify(labels_host, "eval_label_ids"))
 
         torch.cuda.nvtx.range_push('GATHER_TENSORS-FINALIZE')
-        eval_loss = eval_losses_gatherer.finalize()
+        # eval_loss = eval_losses_gatherer.finalize()
         preds = preds_gatherer.finalize() if not prediction_loss_only else None
         label_ids = labels_gatherer.finalize() if not prediction_loss_only else None
         torch.cuda.nvtx.range_pop()  # GATHER_TENSORS-FINALIZE
@@ -1847,7 +1852,8 @@ class Trainer:
             metrics = {}
 
         if eval_loss is not None:
-            metrics[f"{metric_key_prefix}_loss"] = eval_loss.mean().item()
+            metrics[f"{metric_key_prefix}_loss"] = eval_loss.item()
+            # metrics[f"{metric_key_prefix}_loss"] = eval_loss.mean().item()
 
         # Prefix all keys with metric_key_prefix + '_'
         for key in list(metrics.keys()):
