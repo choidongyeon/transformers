@@ -553,6 +553,42 @@ class DistributedLengthGroupedSampler(DistributedSampler):
         return iter(indices)
 
 
+class DataPrefetcher:
+    def __init__(self, dataloader, device, past_index, _past):
+        self.dataloader = iter(dataloader)
+        self.device = device
+        self.past_index = past_index
+        self._past = _past
+        self.stream = torch.cuda.Stream()
+        self.preload()
+
+    def preload(self):
+        try:
+            self.next_inputs = next(self.dataloader)
+        except StopIteration:
+            self.next_inputs = None
+            return
+
+        with torch.cuda.stream(self.stream):
+            # logic taken directly from _prepare_inputs
+            for k, v in self.next_inputs.items():
+                if isinstance(v, torch.Tensor):
+                    self.next_inputs[k] = v.cuda(device=self.device, non_blocking=True)
+
+            if self.past_index >= 0 and self._past is not None:
+                self.next_inputs["mems"] = self._past
+
+    def next(self):
+        torch.cuda.current_stream().wait_stream(self.stream)
+        inputs = self.next_inputs
+        if inputs is not None:
+            for k in inputs.keys():
+                if isinstance(inputs[k], torch.Tensor):
+                    inputs[k].record_stream(torch.cuda.current_stream())
+        self.preload()
+        return inputs
+
+
 # In order to keep `trainer.py` compact and easy to understand, place any secondary PT Trainer
 # helper methods here
 
