@@ -588,6 +588,7 @@ class Trainer:
             drop_last=self.args.dataloader_drop_last,
             num_workers=self.args.dataloader_num_workers,
             pin_memory=self.args.dataloader_pin_memory,
+            persistent_workers=True,
         )
 
     def get_test_dataloader(self, test_dataset: Dataset) -> DataLoader:
