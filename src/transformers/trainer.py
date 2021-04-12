@@ -76,6 +76,7 @@ from .trainer_callback import (
 from .trainer_pt_utils import (
     DistributedLengthGroupedSampler,
     DistributedTensorGatherer,
+    DataPrefetcher,
     LabelSmoother,
     LengthGroupedSampler,
     SequentialDistributedSampler,
@@ -1782,7 +1783,11 @@ class Trainer:
 
         self.callback_handler.eval_dataloader = dataloader
 
-        for step, inputs in enumerate(dataloader):
+        data_prefetcher = DataPrefetcher(dataloader, self.args.device, self.args.past_index, None)
+        inputs = data_prefetcher.next()
+        step = 0
+
+        while inputs is not None:
             loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
             if loss is not None:
                 losses = loss.repeat(batch_size)
@@ -1802,6 +1807,8 @@ class Trainer:
 
                 # Set back to None to begin a new accumulation
                 losses_host, preds_host, labels_host = None, None, None
+            inputs = data_prefetcher.next()
+            step += 1
 
         if self.args.past_index and hasattr(self, "_past"):
             # Clean the state at the end of the evaluation loop
@@ -1877,7 +1884,6 @@ class Trainer:
             labels (each being optional).
         """
         has_labels = all(inputs.get(k) is not None for k in self.label_names)
-        inputs = self._prepare_inputs(inputs)
         if ignore_keys is None:
             if hasattr(self.model, "config"):
                 ignore_keys = getattr(self.model.config, "keys_to_ignore_at_inference", [])
