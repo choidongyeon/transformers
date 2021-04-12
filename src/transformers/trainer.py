@@ -1397,7 +1397,7 @@ class Trainer:
         """
         for k, v in inputs.items():
             if isinstance(v, torch.Tensor):
-                inputs[k] = v.to(self.args.device)
+                inputs[k] = v.to(self.args.device, non_blocking=True)
 
         if self.args.past_index >= 0 and self._past is not None:
             inputs["mems"] = self._past
@@ -1461,17 +1461,21 @@ class Trainer:
             labels = inputs.pop("labels")
         else:
             labels = None
+        torch.cuda.nvtx.range_push('compute_prediction')
         outputs = model(**inputs)
+        torch.cuda.nvtx.range_pop() # compute_prediction
         # Save past state if it exists
         # TODO: this needs to be fixed and made cleaner later.
         if self.args.past_index >= 0:
             self._past = outputs[self.args.past_index]
 
+        torch.cuda.nvtx.range_push('compute_loss')
         if labels is not None:
             loss = self.label_smoother(outputs, labels)
         else:
             # We don't use .loss here since the model may return tuples instead of ModelOutput.
             loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
+        torch.cuda.nvtx.range_pop() # compute_loss
 
         return (loss, outputs) if return_outputs else loss
 
@@ -1645,6 +1649,8 @@ class Trainer:
         eval_dataloader = self.get_eval_dataloader(eval_dataset)
         start_time = time.time()
 
+        torch.cuda.nvtx.range_push('prediction_loop')
+
         output = self.prediction_loop(
             eval_dataloader,
             description="Evaluation",
@@ -1654,6 +1660,7 @@ class Trainer:
             ignore_keys=ignore_keys,
             metric_key_prefix=metric_key_prefix,
         )
+        torch.cuda.nvtx.range_pop() # prediction_loop
 
         n_samples = len(eval_dataset if eval_dataset is not None else self.eval_dataset)
         output.metrics.update(speed_metrics(metric_key_prefix, start_time, n_samples))
@@ -1782,8 +1789,18 @@ class Trainer:
 
         self.callback_handler.eval_dataloader = dataloader
 
-        for step, inputs in enumerate(dataloader):
+        torch.cuda.nvtx.range_push('loop - iter_dataloader')
+        iter_dataloader = iter(dataloader)
+        torch.cuda.nvtx.range_pop() # loop - iter_dataloader
+
+        # for step, inputs in enumerate(dataloader):
+        for step in range(len(dataloader)):
+            torch.cuda.nvtx.range_push('load data')
+            inputs = next(iter_dataloader)
+            torch.cuda.nvtx.range_pop() # load data
+            torch.cuda.nvtx.range_push('prediction_step')
             loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
+            torch.cuda.nvtx.range_pop() # prediction_step
             if loss is not None:
                 losses = loss.repeat(batch_size)
                 losses_host = losses if losses_host is None else torch.cat((losses_host, losses), dim=0)
@@ -1877,7 +1894,9 @@ class Trainer:
             labels (each being optional).
         """
         has_labels = all(inputs.get(k) is not None for k in self.label_names)
+        torch.cuda.nvtx.range_push('step-prepare_inputs')
         inputs = self._prepare_inputs(inputs)
+        torch.cuda.nvtx.range_pop() # step-prepare_inputs
         if ignore_keys is None:
             if hasattr(self.model, "config"):
                 ignore_keys = getattr(self.model.config, "keys_to_ignore_at_inference", [])
@@ -1894,12 +1913,14 @@ class Trainer:
 
         with torch.no_grad():
             if has_labels:
+                torch.cuda.nvtx.range_push('step-compute_prediction')
                 loss, outputs = self.compute_loss(model, inputs, return_outputs=True)
                 loss = loss.mean().detach()
                 if isinstance(outputs, dict):
                     logits = tuple(v for k, v in outputs.items() if k not in ignore_keys + ["loss"])
                 else:
                     logits = outputs[1:]
+                torch.cuda.nvtx.range_pop() # step-compute_prediction
             else:
                 loss = None
                 if self.use_amp:
